@@ -1,13 +1,28 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { mkdtempSync, rmSync } from "node:fs";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
-import { loadAppConfig, saveAppConfig } from "@ccr/core/config/config.ts";
-import { createDefaultAppConfig } from "@ccr/core/config/default-config.ts";
-import { replacePersistedApiKeys } from "@ccr/core/config/config-repository.ts";
-import { probeExistingCcrGateway } from "@ccr/core/gateway/existing-gateway-probe.ts";
-import { gatewayRuntimeConfigRevision } from "@ccr/core/gateway/runtime-config-control.ts";
-import { gatewayService } from "@ccr/core/gateway/service.ts";
+
+// Keep the test away from the developer's real CCR state: the config
+// repository and the gateway service both resolve their state from the
+// runtime home directory, so point it at a throwaway directory.
+const isolatedHome = mkdtempSync(path.join(os.tmpdir(), "ccr-external-attach-test-"));
+process.env.CCR_INTERNAL_HOME_DIR = isolatedHome;
+process.env.CCR_INTERNAL_USER_DATA_DIR = path.join(isolatedHome, "data");
+
+const { createDefaultAppConfig } = await import("@ccr/core/config/default-config.ts");
+const { loadAppConfig, saveAppConfig } = await import("@ccr/core/config/config.ts");
+const { replacePersistedApiKeys } = await import("@ccr/core/config/config-repository.ts");
+const { probeExistingCcrGateway } = await import("@ccr/core/gateway/existing-gateway-probe.ts");
+const { gatewayRuntimeConfigRevision } = await import("@ccr/core/gateway/runtime-config-control.ts");
+const { gatewayService } = await import("@ccr/core/gateway/service.ts");
+
+test.after(() => {
+  rmSync(isolatedHome, { force: true, recursive: true });
+});
 
 async function findAvailablePort() {
   const server = createServer();
