@@ -369,6 +369,15 @@ export class GatewayRequestPipeline {
       }
 
       if (shouldApplyGatewayRouting(method, path)) {
+        // Without a core auth token the request cannot be forwarded to the core
+        // gateway. That happens while the core runtime is restarting after an
+        // unexpected exit. Answer with a retryable 503 instead of letting the
+        // upstream executor fail with "Core gateway auth token is not
+        // initialized.", which blames the caller's credentials for an outage.
+        if (!this.coreAuthToken) {
+          sendJson(response, 503, { error: { message: "Gateway runtime is not ready. The core gateway is restarting, retry shortly." } });
+          return;
+        }
         const routeAdaptationStartedAt = Date.now();
         const adaptation = adaptRouteRequestBody(path, takeJsonObject(bodyToForward ?? requestBody));
         if (adaptation.modelLocation === "path") {

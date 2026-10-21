@@ -158,3 +158,47 @@ test("adopting an external gateway keeps a usable core auth token", async () => 
     await replacePersistedApiKeys([]);
   }
 });
+
+test("a gateway without a core auth token answers with a retryable 503", async () => {
+  const { GatewayRequestPipeline } = await import("@ccr/core/gateway/request/pipeline.ts");
+  const { ClaudeCodeRouterPlugin } = await import("@ccr/core/gateway/claude-code-router-plugin.ts");
+  const { Readable, Writable } = await import("node:stream");
+
+  const config = createDefaultAppConfig();
+  config.observability.requestLogs = false;
+  config.contextArchive.enabled = false;
+  config.Providers = [{ name: "Primary", models: ["model"], type: "openai_chat_completions", api_base_url: "http://127.0.0.1:9/v1" }];
+  const router = new ClaudeCodeRouterPlugin(config);
+  const pipeline = new GatewayRequestPipeline({
+    getBrowserWebSearchMcpIntegration: () => undefined,
+    getConfig: () => config,
+    // The core runtime is restarting, so there is no credential to forward with.
+    getCoreAuthToken: () => "",
+    getPlugin: () => router,
+    getStatus: () => ({ coreEndpoint: "http://127.0.0.1:3457", endpoint: "http://127.0.0.1:3456" })
+  });
+
+  const request = Readable.from([Buffer.from(JSON.stringify({ model: "Primary/model", messages: [{ role: "user", content: "hi" }] }))]);
+  request.method = "POST";
+  request.url = "/v1/messages";
+  request.headers = { "content-type": "application/json" };
+  const chunks = [];
+  let status;
+  const response = new Writable({
+    write(chunk, _encoding, done) {
+      chunks.push(chunk.toString());
+      done();
+    }
+  });
+  response.writeHead = (value) => {
+    status = value;
+    return response;
+  };
+
+  await pipeline.proxyRequest(request, response, "/v1/messages");
+
+  assert.equal(status, 503);
+  const payload = JSON.parse(chunks.join(""));
+  assert.match(payload.error.message, /not ready/i);
+  assert.doesNotMatch(payload.error.message, /auth token is not initialized/);
+});
